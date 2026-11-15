@@ -63,6 +63,7 @@ import {
   ArrowLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  InboxIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -1758,6 +1759,17 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:asks",
+    searchTerms: ["asks", "open asks", "needs me", "waiting", "questions", "approvals", "inbox"],
+    title: "Open asks",
+    icon: <InboxIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/asks" });
     },
   });
 
