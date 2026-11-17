@@ -30,6 +30,7 @@ import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -175,6 +176,20 @@ export function isAutoSettlementCandidate(
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);
+}
+
+/**
+ * A thread whose latest run failed on a usage limit that auto-resume will still pick up. Settling
+ * it (for example because its pull requests merged) would drop it from recovery for good.
+ */
+export function awaitsLimitRecovery(
+  thread: Pick<ProjectionStore.ProjectionSettlementCandidate, "latestRunLimitResetAt">,
+  nowMs: number,
+): boolean {
+  if (thread.latestRunLimitResetAt == null) return false;
+  const resetMs = Date.parse(thread.latestRunLimitResetAt);
+  // Past the arming window the worker gives up, so the thread must not stay unsettled forever.
+  return Number.isFinite(resetMs) && nowMs - resetMs <= UsageLimitRecoveryWorker.MAX_OVERDUE_ARM_MS;
 }
 
 /** Match client effectiveSnoozed so agents and sidebar agree. */
@@ -363,7 +378,8 @@ export const make = Effect.gen(function* () {
     const candidates = threads.filter(
       (thread) =>
         (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
-        isAutoSettlementCandidate(thread, nowMs),
+        isAutoSettlementCandidate(thread, nowMs) &&
+        !(settings.autoResumeLimitedThreads && awaitsLimitRecovery(thread, nowMs)),
     );
 
     // Runs per candidate thread, thousands per sweep on busy servers; the sweep owns the span.

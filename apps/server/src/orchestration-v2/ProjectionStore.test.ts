@@ -8348,6 +8348,78 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("recovers a reset already past at failure once, never after a continuation", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("limit-stale");
+      const original = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const staleResetAt = DateTime.formatIso(DateTime.subtract(now, { hours: 2 }));
+      yield* store.apply({
+        id: EventId.make("event:limit-stale:error"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("limit-stale:error"),
+          threadId,
+          runId: original.id,
+          nodeId: original.rootNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "failed" as const,
+          title: "Usage limit reached",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "error" as const,
+          failure: {
+            class: "usage_limit" as const,
+            message: "Plan limit reached.",
+            resetAt: staleResetAt,
+            code: "usageLimitExceeded",
+            retryable: null,
+          },
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-stale:run"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...original, status: "failed", completedAt: now },
+      });
+      const find = Effect.fnUntraced(function* () {
+        return (yield* store.getLimitRecoveryCandidates({
+          now,
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === threadId);
+      });
+      const natural = yield* find();
+      assert.isDefined(natural);
+      assert.isFalse(natural!.latestRunIsLimitContinuation);
+      // Settlement sees the same failure, so a merged thread is not settled away from recovery.
+      const [settlement] = (yield* store.getSettlementCandidates(threadId)).filter(
+        (row) => row.id === threadId,
+      );
+      assert.strictEqual(
+        settlement?.latestRunLimitResetAt == null
+          ? null
+          : DateTime.toEpochMillis(DateTime.makeUnsafe(settlement.latestRunLimitResetAt)),
+        DateTime.toEpochMillis(DateTime.makeUnsafe(staleResetAt)),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_runs
+        SET payload_json = json_set(payload_json, '$.usageLimitContinuationOfRunId', 'run:earlier')
+        WHERE run_id = ${original.id}`;
+      assert.isUndefined(yield* find());
+    }),
+  );
+
   it.effect("projects only the latest failed root turn's limit into SQL and memory shells", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
@@ -8417,6 +8489,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,
             latestRunId: sqlShell.latestRunId,
+            latestRunIsLimitContinuation: false,
             latestRunCompletedAt: sqlShell.latestRunCompletedAt,
             updatedAt: sqlShell.updatedAt,
             archivedAt: sqlShell.archivedAt,

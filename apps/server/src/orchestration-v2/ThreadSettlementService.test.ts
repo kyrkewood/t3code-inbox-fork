@@ -135,6 +135,30 @@ function persistedLink(
   };
 }
 
+describe("awaitsLimitRecovery", () => {
+  const hoursAgo = (hours: number) =>
+    DateTime.formatIso(DateTime.makeUnsafe(NOW_MS - hours * 3_600_000));
+
+  it("holds a thread that failed on a limit whose reset is recent or still ahead", () => {
+    expect(
+      ThreadSettlementService.awaitsLimitRecovery({ latestRunLimitResetAt: hoursAgo(1) }, NOW_MS),
+    ).toBe(true);
+    expect(
+      ThreadSettlementService.awaitsLimitRecovery({ latestRunLimitResetAt: hoursAgo(-5) }, NOW_MS),
+    ).toBe(true);
+  });
+
+  it("lets a thread settle when it did not fail on a limit or recovery has given up", () => {
+    expect(ThreadSettlementService.awaitsLimitRecovery({}, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.awaitsLimitRecovery({ latestRunLimitResetAt: null }, NOW_MS),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.awaitsLimitRecovery({ latestRunLimitResetAt: hoursAgo(25) }, NOW_MS),
+    ).toBe(false);
+  });
+});
+
 describe("isAutoSettlementCandidate", () => {
   it("settles a thread whose only background work is a command left running", () => {
     expect(
