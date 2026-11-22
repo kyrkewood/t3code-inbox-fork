@@ -4,22 +4,33 @@ import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import * as DateTime from "effect/DateTime";
 import { msg } from "gt-react";
 
+import { detectAsk, type DetectedAsk } from "./askDetection.logic";
 import {
   filterSidebarV2VisibleThreads,
   resolveThreadStatusPill,
   type ThreadStatusPill,
 } from "../Sidebar.logic";
 
-export type OpenAskKind = "input" | "approval" | "plan" | "guest" | "failed" | "unread";
+export type OpenAskKind =
+  | "input"
+  | "approval"
+  | "marked"
+  | "plan"
+  | "guest"
+  | "failed"
+  | "inferred"
+  | "unread";
 
 // Answering unblocks the agent, so questions lead; unread output is the softest ask.
 const KIND_RANK: Record<OpenAskKind, number> = {
   input: 0,
   approval: 1,
-  plan: 2,
-  guest: 3,
-  failed: 4,
-  unread: 5,
+  marked: 2,
+  plan: 3,
+  guest: 4,
+  failed: 5,
+  inferred: 6,
+  unread: 7,
 };
 
 const KIND_BY_PILL: Partial<Record<ThreadStatusPill["label"], OpenAskKind>> = {
@@ -34,9 +45,11 @@ const KIND_BY_PILL: Partial<Record<ThreadStatusPill["label"], OpenAskKind>> = {
 export const OPEN_ASK_KIND_LABEL = {
   input: msg("Answer"),
   approval: msg("Approve"),
+  marked: msg("Needs you"),
   plan: msg("Review plan"),
   guest: msg("Guest message"),
   failed: msg("Failed"),
+  inferred: msg("Might need you"),
   unread: msg("Finished, unread"),
 } satisfies Record<OpenAskKind, ReturnType<typeof msg>>;
 
@@ -49,6 +62,8 @@ export interface OpenAsk {
   readonly kind: OpenAskKind;
   readonly since: string;
   readonly context: string | null;
+  // The message an ask was read from, so "Not an ask" can dismiss it. Null when none applies.
+  readonly messageId: string | null;
 }
 
 function askSince(thread: EnvironmentThreadShell, kind: OpenAskKind): string {
@@ -60,6 +75,11 @@ function askSince(thread: EnvironmentThreadShell, kind: OpenAskKind): string {
   if (kind === "approval" && request) return DateTime.formatIso(request.createdAt);
   if (kind === "failed") return thread.runtime?.updatedAt ?? thread.updatedAt;
   return thread.latestRun?.completedAt ?? thread.updatedAt;
+}
+
+/** Unread output may turn out to hold an ask; structured kinds already say what is needed. */
+function upgrade(kind: OpenAskKind, detected: DetectedAsk | null): OpenAskKind {
+  return kind === "unread" && detected !== null ? detected.kind : kind;
 }
 
 function askContext(thread: EnvironmentThreadShell): string | null {
@@ -86,6 +106,8 @@ export function deriveOpenAsks(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly hiddenThreadKeys: ReadonlySet<string>;
+  // Messages the user marked "Not an ask"; they stop counting as marked or inferred asks.
+  readonly dismissedMessageIds: ReadonlySet<string>;
   readonly now: string;
 }): OpenAsk[] {
   const asks: OpenAsk[] = [];
@@ -101,14 +123,32 @@ export function deriveOpenAsks(input: {
       continue;
     }
     const pill = resolveThreadStatusPill({ thread });
-    const kind = pill === null ? undefined : KIND_BY_PILL[pill.label];
+    const pillKind = pill === null ? undefined : KIND_BY_PILL[pill.label];
+    // A thread that is working, connecting or waiting on a subthread is not at a stopping point.
+    if (pill !== null && pillKind === undefined) continue;
+    const message = thread.source.latestVisibleMessage;
+    const detected =
+      message?.role === "assistant" && !input.dismissedMessageIds.has(message.id)
+        ? detectAsk(message.text)
+        : null;
+    // The thread's own status says it needs nothing, so only an explicit line can add an ask.
+    const kind =
+      pillKind === undefined
+        ? detected?.kind === "marked"
+          ? "marked"
+          : undefined
+        : upgrade(pillKind, detected);
     if (kind === undefined) continue;
+    const fromMessage = kind === "marked" || kind === "inferred";
     asks.push({
       key,
       thread,
       kind,
-      since: askSince(thread, kind),
-      context: askContext(thread),
+      since:
+        fromMessage && message ? DateTime.formatIso(message.updatedAt) : askSince(thread, kind),
+      // A marked line is the exact ask; otherwise show the end of the message it came from.
+      context: detected?.kind === "marked" ? detected.summary : askContext(thread),
+      messageId: fromMessage && message ? message.id : null,
     });
   }
   return asks.sort(compareOpenAsks);

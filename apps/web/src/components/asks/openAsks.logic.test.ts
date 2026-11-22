@@ -43,11 +43,16 @@ function withAssistantText(
   };
 }
 
-function derive(threads: ReturnType<typeof thread>[], hidden: string[] = []) {
+function derive(
+  threads: ReturnType<typeof thread>[],
+  hidden: string[] = [],
+  dismissed: string[] = [],
+) {
   return deriveOpenAsks({
     threads,
     delegatedUnderParent: new Set(),
     hiddenThreadKeys: new Set(hidden),
+    dismissedMessageIds: new Set(dismissed),
     now: NOW,
   });
 }
@@ -127,5 +132,68 @@ describe("groupOpenAsks", () => {
     const groups = groupOpenAsks(asks, (ask) => ask.thread.projectId);
     expect(groups.map((group) => group.groupKey)).toEqual(["p2", "p1"]);
     expect(groups[1]!.asks.map((ask) => ask.thread.id)).toEqual(["p1-approval", "p1-guest"]);
+  });
+});
+
+describe("deriveOpenAsks with asks found in the last message", () => {
+  const marked = "All green.\n\nNeeds you: merge #12?";
+  const question = "The PR is up.\n\nShould I also update the docs?";
+
+  it("lists a read thread whose last message ends with a Needs you line", () => {
+    const [ask] = derive([withAssistantText(thread("a"), "assistant", marked)]);
+    expect(ask).toMatchObject({ kind: "marked", context: "merge #12?" });
+  });
+
+  it("does not list a read thread on a guess alone", () => {
+    expect(derive([withAssistantText(thread("a"), "assistant", question)])).toEqual([]);
+  });
+
+  it("ignores a Needs you line the user has already replied to", () => {
+    expect(derive([withAssistantText(thread("a"), "user", marked)])).toEqual([]);
+  });
+
+  it("skips a thread that is still working", () => {
+    const working = withAssistantText(
+      thread("a", { runtime: { status: "running" } as never }),
+      "assistant",
+      marked,
+    );
+    expect(derive([working])).toEqual([]);
+  });
+
+  it("upgrades unread output to marked or inferred", () => {
+    const kinds = derive([
+      withAssistantText(thread("marked", UNREAD), "assistant", marked),
+      withAssistantText(thread("inferred", UNREAD), "assistant", question),
+      withAssistantText(thread("plain", UNREAD), "assistant", "Fixed the bug."),
+    ]).map((ask) => [ask.thread.id, ask.kind]);
+    expect(kinds).toEqual([
+      ["marked", "marked"],
+      ["inferred", "inferred"],
+      ["plain", "unread"],
+    ]);
+  });
+
+  it("keeps a structured question as the kind but shows the marked ask as its context", () => {
+    const [ask] = derive([
+      withAssistantText(thread("a", { hasPendingUserInput: true }), "assistant", marked),
+    ]);
+    expect(ask).toMatchObject({ kind: "input", context: "merge #12?" });
+  });
+
+  it("drops a dismissed guess back to plain unread, and a dismissed mark off a read thread", () => {
+    const unread = withAssistantText(thread("u", UNREAD), "assistant", question);
+    expect(derive([unread], [], ["message-1"]).map((ask) => ask.kind)).toEqual(["unread"]);
+    const read = withAssistantText(thread("r"), "assistant", marked);
+    expect(derive([read], [], ["message-1"])).toEqual([]);
+  });
+
+  it("ranks a marked ask after approvals and before plans and failures", () => {
+    const asks = derive([
+      thread("failed", { latestRun: { ...UNREAD.latestRun!, status: "failed" } }),
+      withAssistantText(thread("marked"), "assistant", marked),
+      thread("approval", { hasPendingApprovals: true }),
+    ]);
+    expect(asks.map((ask) => ask.thread.id)).toEqual(["approval", "marked", "failed"]);
   });
 });
