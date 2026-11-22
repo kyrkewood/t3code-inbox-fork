@@ -2,6 +2,7 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import * as DateTime from "effect/DateTime";
+import { msg } from "gt-react";
 
 import {
   filterSidebarV2VisibleThreads,
@@ -30,14 +31,14 @@ const KIND_BY_PILL: Partial<Record<ThreadStatusPill["label"], OpenAskKind>> = {
   Completed: "unread",
 };
 
-export const OPEN_ASK_KIND_LABEL: Record<OpenAskKind, string> = {
-  input: "Answer",
-  approval: "Approve",
-  plan: "Review plan",
-  guest: "Guest message",
-  failed: "Failed",
-  unread: "Finished, unread",
-};
+export const OPEN_ASK_KIND_LABEL = {
+  input: msg("Answer"),
+  approval: msg("Approve"),
+  plan: msg("Review plan"),
+  guest: msg("Guest message"),
+  failed: msg("Failed"),
+  unread: msg("Finished, unread"),
+} satisfies Record<OpenAskKind, ReturnType<typeof msg>>;
 
 // The ask sits at the end of an agent message, so keep the tail.
 const CONTEXT_MAX_CHARS = 280;

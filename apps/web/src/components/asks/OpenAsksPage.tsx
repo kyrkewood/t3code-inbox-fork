@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
@@ -39,6 +40,7 @@ function projectKeyOf(ask: OpenAsk) {
 
 function AskRow({ ask, nowMs }: { readonly ask: OpenAsk; readonly nowMs: number }) {
   const { thread } = ask;
+  const m = useMessages();
   return (
     <li>
       <Link
@@ -47,7 +49,7 @@ function AskRow({ ask, nowMs }: { readonly ask: OpenAsk; readonly nowMs: number 
         className="flex flex-col gap-1 rounded-lg px-3 py-2 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <span className="flex items-center gap-2">
-          <Badge variant={KIND_BADGE_VARIANT[ask.kind]}>{OPEN_ASK_KIND_LABEL[ask.kind]}</Badge>
+          <Badge variant={KIND_BADGE_VARIANT[ask.kind]}>{m(OPEN_ASK_KIND_LABEL[ask.kind])}</Badge>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{thread.title}</span>
           <span className="shrink-0 text-xs text-muted-foreground">
             {formatRelativeTimeLabel(ask.since, nowMs)}
@@ -62,6 +64,7 @@ function AskRow({ ask, nowMs }: { readonly ask: OpenAsk; readonly nowMs: number 
 }
 
 export function OpenAsksPage() {
+  const gt = useGT();
   const threads = useQuietThreadShells();
   const projects = useProjects();
   const delegatedUnderParent = useDelegatedUnderParent();
@@ -76,10 +79,12 @@ export function OpenAsksPage() {
   const nowMs = Date.parse(now);
 
   return (
-    <AppRouteModal label="Open asks">
+    <AppRouteModal label={gt("Open asks")}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex min-h-12 shrink-0 items-center gap-2 border-b ps-5 pe-2">
-          <h1 className="text-sm font-medium">Open asks</h1>
+          <h1 className="text-sm font-medium">
+            <T>Open asks</T>
+          </h1>
           {asks.length === 0 ? null : <Badge variant="secondary">{asks.length}</Badge>}
           <span className="flex-1" />
           <AppRouteModalClose />
@@ -89,9 +94,14 @@ export function OpenAsksPage() {
             {groups.length === 0 ? (
               <Empty>
                 <EmptyHeader>
-                  <EmptyTitle>Nothing is waiting on you</EmptyTitle>
+                  <EmptyTitle>
+                    <T>Nothing is waiting on you</T>
+                  </EmptyTitle>
                   <EmptyDescription>
-                    Questions, approvals, plans to review, failures and unread results show up here.
+                    <T>
+                      Questions, approvals, plans to review, failures and unread results show up
+                      here.
+                    </T>
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>
@@ -100,7 +110,7 @@ export function OpenAsksPage() {
                 {groups.map((group) => (
                   <section key={group.groupKey} aria-label={projectTitles.get(group.groupKey)}>
                     <h2 className="px-3 pb-1 text-xs font-medium text-muted-foreground">
-                      {projectTitles.get(group.groupKey) ?? "Unknown project"}
+                      {projectTitles.get(group.groupKey) ?? gt("Unknown project")}
                     </h2>
                     <ul className="flex flex-col">
                       {group.asks.map((ask) => (

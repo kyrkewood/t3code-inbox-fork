@@ -1766,7 +1766,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:asks",
     searchTerms: ["asks", "open asks", "needs me", "waiting", "questions", "approvals", "inbox"],
-    title: "Open asks",
+    title: gt("Open asks"),
     icon: <InboxIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/asks" });
