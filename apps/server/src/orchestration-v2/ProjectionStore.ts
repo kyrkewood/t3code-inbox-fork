@@ -208,7 +208,11 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
->;
+> & {
+  // A continuation that fails on a reset already past must not retry again. Left unset, the
+  // run counts as one, so a stale reset stays unrecovered.
+  readonly latestRunIsLimitContinuation?: boolean;
+};
 
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
@@ -247,6 +251,8 @@ export type ProjectionSettlementCandidate = Pick<
 > &
   Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
+    // Reset time when the latest run failed on a usage limit, else null.
+    readonly latestRunLimitResetAt?: string | null;
   };
 
 const ProjectionCheckpointContext = Schema.Struct({
@@ -1311,7 +1317,7 @@ type SettlementThreadRow = Pick<
   | "latest_run_completed_at"
   | "latest_user_message_at"
   | "latest_user_authored_message_at"
->;
+> & { readonly latest_run_limit_reset_at: string | null };
 
 type ShellRunItemCountRow = {
   readonly thread_id: string;
@@ -4957,10 +4963,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           readonly payload_json: string;
           readonly run_id: string;
           readonly completed_at: string | null;
+          readonly is_limit_continuation: number;
           readonly failure_payload_json: string;
           readonly last_error: string | null;
         }>`
           SELECT t.payload_json, r.run_id, r.completed_at,
+            json_extract(r.payload_json, '$.usageLimitContinuationOfRunId') IS NOT NULL AS is_limit_continuation,
             item.payload_json AS failure_payload_json,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
@@ -5012,7 +5020,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_valid(item.payload_json)
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
-            AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
+            -- A reset already past at failure resumes once; a continuation that fails the
+            -- same way stops, so a stale window cannot start a retry loop.
+            AND (
+              julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
+              OR json_extract(r.payload_json, '$.usageLimitContinuationOfRunId') IS NULL
+            )
             AND (
               (
                 json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
@@ -5067,6 +5080,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             lastErrorClass: summary.lastErrorClass,
             usageLimitResetAt: summary.usageLimitResetAt,
             latestRunId: RunId.make(row.run_id),
+            latestRunIsLimitContinuation: row.is_limit_continuation === 1,
             latestRunCompletedAt:
               row.completed_at === null ? null : DateTime.makeUnsafe(row.completed_at),
             updatedAt: thread.updatedAt,
@@ -8821,6 +8835,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               r.requested_at AS latest_run_requested_at,
               json_extract(r.payload_json, '$.startedAt') AS latest_run_started_at,
               r.completed_at AS latest_run_completed_at,
+              CASE WHEN r.status = 'failed' THEN (
+                SELECT json_extract(failure.payload_json, '$.failure.resetAt')
+                FROM orchestration_v2_projection_turn_items failure
+                WHERE failure.thread_id = t.thread_id AND failure.run_id = r.run_id
+                  AND failure.type = 'error' AND failure.status = 'failed'
+                  AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+                ORDER BY failure.updated_at DESC, failure.ordinal DESC, failure.turn_item_id DESC
+                LIMIT 1
+              ) END AS latest_run_limit_reset_at,
               (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
@@ -8926,6 +8949,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     row.latest_user_message_at === null
                       ? null
                       : DateTime.makeUnsafe(row.latest_user_message_at),
+                  latestRunLimitResetAt: row.latest_run_limit_reset_at ?? null,
                   latestUserAuthoredMessageAt:
                     row.latest_user_authored_message_at === null
                       ? null

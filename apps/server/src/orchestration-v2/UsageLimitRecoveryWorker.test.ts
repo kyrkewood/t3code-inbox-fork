@@ -73,7 +73,7 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
 const HOUR_MS = 60 * 60 * 1000;
 const nowMs = Date.parse("2026-10-19T12:00:00.000Z");
 
-const failedThread = (failedAgoMs: number, resetAgoMs: number) => {
+const failedThread = (failedAgoMs: number, resetAgoMs: number, isContinuation = false) => {
   const failedAt = DateTime.makeUnsafe(nowMs - failedAgoMs);
   const candidate: ProjectionStore.ProjectionLimitRecoveryCandidate = {
     id: ThreadId.make("thread:limited"),
@@ -81,6 +81,7 @@ const failedThread = (failedAgoMs: number, resetAgoMs: number) => {
     lastErrorClass: "usage_limit",
     usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - resetAgoMs)),
     latestRunId: RunId.make("run:limited"),
+    latestRunIsLimitContinuation: isContinuation,
     latestRunCompletedAt: failedAt,
     updatedAt: failedAt,
     archivedAt: null,
@@ -114,5 +115,30 @@ describe("limitRecoveryCommand arming", () => {
   it("does not arm a reset that is 24 hours and 1ms overdue", () => {
     const thread = failedThread(30 * HOUR_MS, 24 * HOUR_MS + 1);
     assert.isNull(limitRecoveryCommand(thread, true, nowMs));
+  });
+});
+
+describe("limitRecoveryCommand with a reset already past at failure", () => {
+  // Reset quoted at 7:20, failure recorded at 7:25.
+  const stale = (isContinuation = false) =>
+    failedThread(30 * 60 * 1000, 35 * 60 * 1000, isContinuation);
+
+  it("arms and then resumes a natural failure once", () => {
+    const thread = stale();
+    const arm = limitRecoveryCommand(thread, true, nowMs);
+    assert.equal(arm?.type, "thread.metadata.update");
+    if (arm?.type !== "thread.metadata.update") return;
+    const armed = { ...thread, limitRecovery: { ...arm.limitRecovery!, requestId: "req" } };
+    const resume = limitRecoveryCommand(armed as never, true, nowMs);
+    assert.equal(resume?.type, "message.dispatch");
+  });
+
+  it("stops when the failing run is itself a limit continuation", () => {
+    assert.isNull(limitRecoveryCommand(stale(true), true, nowMs));
+    assert.isNull(limitRecoveryCommand(stale(true), true, nowMs, true));
+  });
+
+  it("does nothing when auto-resume and snooze are both off", () => {
+    assert.isNull(limitRecoveryCommand(stale(), false, nowMs));
   });
 });

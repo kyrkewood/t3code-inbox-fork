@@ -31,10 +31,12 @@ export function limitRecoveryCommand(
   )
     return null;
   const resetMs = Date.parse(thread.usageLimitResetAt);
-  // An already-expired window reported with a fresh failure cannot start a retry loop.
+  if (!Number.isFinite(resetMs)) return null;
+  // A reset already past when the run failed means the limit has lifted, so resume once.
+  // A continuation that fails the same way stops, so a stale window cannot start a retry loop.
   if (
-    !Number.isFinite(resetMs) ||
-    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
+    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt) &&
+    thread.latestRunIsLimitContinuation !== false
   )
     return null;
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
