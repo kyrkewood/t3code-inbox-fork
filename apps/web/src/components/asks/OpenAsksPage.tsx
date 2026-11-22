@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router";
+import * as Schema from "effect/Schema";
 import { T, useGT, useMessages } from "gt-react";
 
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useDelegatedUnderParent,
@@ -11,6 +13,7 @@ import {
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { ScrollArea } from "../ui/scroll-area";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
@@ -28,25 +31,40 @@ const KIND_BADGE_VARIANT: Record<
 > = {
   input: "info",
   approval: "warning",
+  marked: "info",
   plan: "secondary",
   guest: "secondary",
   failed: "error",
+  inferred: "outline",
   unread: "outline",
 };
+
+// Message ids marked "Not an ask". Kept on this device only, newest last, and capped.
+const DISMISSED_STORAGE_KEY = "t3code:open-asks:dismissed-messages";
+const DISMISSED_LIMIT = 500;
+const DismissedMessages = Schema.Array(Schema.String);
 
 function projectKeyOf(ask: OpenAsk) {
   return `${ask.thread.environmentId}:${ask.thread.projectId}`;
 }
 
-function AskRow({ ask, nowMs }: { readonly ask: OpenAsk; readonly nowMs: number }) {
+function AskRow({
+  ask,
+  nowMs,
+  onDismiss,
+}: {
+  readonly ask: OpenAsk;
+  readonly nowMs: number;
+  readonly onDismiss: (messageId: string) => void;
+}) {
   const { thread } = ask;
   const m = useMessages();
   return (
-    <li>
+    <li className="flex items-start gap-1">
       <Link
         to="/$environmentId/$threadId"
         params={{ environmentId: thread.environmentId, threadId: thread.id }}
-        className="flex flex-col gap-1 rounded-lg px-3 py-2 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex min-w-0 flex-1 flex-col gap-1 rounded-lg px-3 py-2 outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <span className="flex items-center gap-2">
           <Badge variant={KIND_BADGE_VARIANT[ask.kind]}>{m(OPEN_ASK_KIND_LABEL[ask.kind])}</Badge>
@@ -59,6 +77,16 @@ function AskRow({ ask, nowMs }: { readonly ask: OpenAsk; readonly nowMs: number 
           <span className="line-clamp-3 text-xs text-muted-foreground">{ask.context}</span>
         )}
       </Link>
+      {ask.messageId === null ? null : (
+        <Button
+          size="compact"
+          variant="ghost"
+          className="mt-1.5 shrink-0"
+          onClick={() => onDismiss(ask.messageId!)}
+        >
+          <T>Not an ask</T>
+        </Button>
+      )}
     </li>
   );
 }
@@ -70,8 +98,22 @@ export function OpenAsksPage() {
   const delegatedUnderParent = useDelegatedUnderParent();
   const hiddenThreadKeys = useHiddenThreadKeys();
   const now = useNowMinute();
+  const [dismissed, setDismissed] = useLocalStorage<readonly string[], readonly string[]>(
+    DISMISSED_STORAGE_KEY,
+    [],
+    DismissedMessages,
+  );
+  const dismissedMessageIds = new Set(dismissed);
+  const dismiss = (messageId: string) =>
+    setDismissed((current) => [...current, messageId].slice(-DISMISSED_LIMIT));
 
-  const asks = deriveOpenAsks({ threads, delegatedUnderParent, hiddenThreadKeys, now });
+  const asks = deriveOpenAsks({
+    threads,
+    delegatedUnderParent,
+    hiddenThreadKeys,
+    dismissedMessageIds,
+    now,
+  });
   const groups = groupOpenAsks(asks, projectKeyOf);
   const projectTitles = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project.title]),
@@ -114,7 +156,7 @@ export function OpenAsksPage() {
                     </h2>
                     <ul className="flex flex-col">
                       {group.asks.map((ask) => (
-                        <AskRow key={ask.key} ask={ask} nowMs={nowMs} />
+                        <AskRow key={ask.key} ask={ask} nowMs={nowMs} onDismiss={dismiss} />
                       ))}
                     </ul>
                   </section>
