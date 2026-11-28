@@ -1,7 +1,11 @@
+import { ASK_PHRASES } from "./askPhrases";
+import type { AskPhrases } from "./askPhrases/types";
+
 /**
  * Finds an ask in the final assistant message when the agent raised none through the app.
  * Two tiers: an explicit `Needs you:` line is trusted; a closing question or review hand-off is
  * only inferred and the UI says so. Wrong inferences cost trust, so the inferred tier stays narrow.
+ * The `Needs you:` marker stays English in every language so agents have one string to write.
  */
 
 export type DetectedAsk =
@@ -10,9 +14,23 @@ export type DetectedAsk =
 
 const MARKER = /^\s*(?:[-*>]\s+)?(?:\*\*|__)?needs you(?:\*\*|__)?:(?:\*\*|__)?\s*(.*)$/i;
 const FENCE = /^\s*(?:```|~~~)/;
-const INFERRED_PHRASE =
-  /\b(?:let me know|ready for (?:your |a )?review|want me to|should i|shall i|would you like|your call)\b/i;
+// ASCII `?`, fullwidth `？` (Japanese, Chinese) and Arabic `؟`.
+const QUESTION_END = /[?？؟]$/;
 const SUMMARY_MAX_CHARS = 160;
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function phraseMatcher({ bounded, phrases }: AskPhrases): RegExp | null {
+  if (phrases.length === 0) return null;
+  const body = phrases.map(escapeRegExp).join("|");
+  // `\b` only knows ASCII letters, so bound on Unicode letters and digits instead.
+  return new RegExp(
+    bounded ? `(?<![\\p{L}\\p{N}])(?:${body})(?![\\p{L}\\p{N}])` : `(?:${body})`,
+    "iu",
+  );
+}
+
+const HANDOFF_MATCHERS = ASK_PHRASES.flatMap((language) => phraseMatcher(language) ?? []);
 
 interface Line {
   readonly text: string;
@@ -71,7 +89,9 @@ function inferAsk(text: string): string | null {
     .map((line) => line.text.trim())
     .join(" ");
   const plain = last.replace(/[*_`>\s]+$/g, "");
-  if (plain.endsWith("?") || INFERRED_PHRASE.test(closing)) return clip(plain);
+  if (QUESTION_END.test(plain) || HANDOFF_MATCHERS.some((matcher) => matcher.test(closing))) {
+    return clip(plain);
+  }
   return null;
 }
 
