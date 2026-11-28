@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
+import { useId } from "react";
 import { T, useGT, useMessages } from "gt-react";
 
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -59,6 +60,7 @@ function AskRow({
 }) {
   const { thread } = ask;
   const m = useMessages();
+  const titleId = useId();
   return (
     <li className="flex items-start gap-1">
       <Link
@@ -68,7 +70,9 @@ function AskRow({
       >
         <span className="flex items-center gap-2">
           <Badge variant={KIND_BADGE_VARIANT[ask.kind]}>{m(OPEN_ASK_KIND_LABEL[ask.kind])}</Badge>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{thread.title}</span>
+          <span id={titleId} className="min-w-0 flex-1 truncate text-sm font-medium">
+            {thread.title}
+          </span>
           <span className="shrink-0 text-xs text-muted-foreground">
             {formatRelativeTimeLabel(ask.since, nowMs)}
           </span>
@@ -82,6 +86,7 @@ function AskRow({
           size="compact"
           variant="ghost"
           className="mt-1.5 shrink-0"
+          aria-describedby={titleId}
           onClick={() => onDismiss(ask.messageId!)}
         >
           <T>Not an ask</T>
