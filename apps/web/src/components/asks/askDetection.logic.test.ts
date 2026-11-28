@@ -49,6 +49,8 @@ describe("detectAsk", () => {
     ["a closing question", "I changed the retry logic.\n\nShould I also update the docs?"],
     ["an invitation to review", "The PR is up.\n\nLet me know what you think."],
     ["a review hand-off", "Everything is implemented and ready for your review."],
+    ["a fullwidth question mark", "リトライ処理を変更しました。\n\nドキュメントも更新しますか？"],
+    ["an Arabic question mark", "تم تعديل الكود.\n\nهل تريد المتابعة؟"],
   ])("infers an ask from %s", (_label, text) => {
     expect(detectAsk(text)?.kind).toBe("inferred");
   });
@@ -58,6 +60,10 @@ describe("detectAsk", () => {
     ["a question mid-message that was answered", "Why did it fail? The cache was stale.\n\nFixed."],
     ["a question inside a code block", "Run:\n```\nwhat is this?\n```\nDone."],
     ["an empty message", "   "],
+    [
+      "a hand-off phrase inside a longer word",
+      "Fixed it.\n\nThe cache should invalidate on write.",
+    ],
   ])("does not infer an ask from %s", (_label, text) => {
     expect(detectAsk(text)).toBeNull();
   });
